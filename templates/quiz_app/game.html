@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game {{ game_code }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Poppins', sans-serif; }
+        .slide { display: none; }
+        .slide.active { display: flex; }
+        .player-card.answered { background: #10b981; color: white; }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-4xl h-[90vh] flex flex-col">
+        <div id="lobby-slide" class="slide flex-col items-center justify-center">
+            <h1 class="text-2xl font-bold text-gray-500">Game Code: <span class="text-indigo-600 tracking-widest">{{ game_code }}</span></h1>
+            <p class="text-lg text-gray-600 mt-4 mb-6">Waiting for players to join...</p>
+            <div id="player-join-list" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 w-full"></div>
+            {% if is_host %}
+                <button id="start-game-btn" class="mt-8 bg-emerald-500 text-white px-8 py-3 rounded-lg font-bold text-lg hover:bg-emerald-600">Start Game</button>
+            {% else %}
+                <p class="mt-8 text-gray-500 font-semibold">Waiting for the starter to begin the game...</p>
+            {% endif %}
+        </div>
+
+        <div id="quiz-slide" class="slide flex-col">
+            <div id="timer-bar" class="w-full bg-gray-200 rounded-full h-2.5 mb-4"><div id="timer-bar-inner" class="bg-indigo-600 h-2.5 rounded-full" style="width: 100%"></div></div>
+            <p id="quiz-question-number" class="text-indigo-600 font-semibold"></p>
+            <h2 id="quiz-question-text" class="text-3xl font-bold text-center text-gray-800 my-6"></h2>
+            <div id="quiz-options-container" class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full"></div>
+            <div class="mt-auto w-full">
+                <h3 class="font-bold text-gray-700">Players Answered:</h3>
+                <div id="player-answer-list" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 mt-2"></div>
+            </div>
+        </div>
+
+        <div id="results-slide" class="slide flex-col items-center justify-center">
+            <h1 class="text-5xl font-bold text-amber-500 mb-4">Congratulations!</h1>
+            <div id="podium-container" class="flex items-end justify-center gap-4 w-full mt-8"></div>
+        </div>
+    </div>
+
+<script>
+    const gameCode = '{{ game_code }}';
+    const isHost = {{ is_host|yesno:"true,false" }};
+    const csrfToken = '{{ csrf_token }}';
+
+    const lobbySlide = document.getElementById('lobby-slide');
+    const quizSlide = document.getElementById('quiz-slide');
+    const resultsSlide = document.getElementById('results-slide');
+
+    function updateUI(state) {
+        // Show/Hide slides
+        document.querySelectorAll('.slide').forEach(s => s.classList.remove('active'));
+        if (state.status === 'joining') {
+            lobbySlide.classList.add('active');
+            renderLobbyPlayers(state.players);
+        } else if (state.status === 'in-progress') {
+            quizSlide.classList.add('active');
+            renderQuestion(state.question);
+            renderAnsweredPlayers(state.players, state.answered_player_ids);
+        } else if (state.status === 'finished') {
+            resultsSlide.classList.add('active');
+            renderResults(state.players);
+        }
+    }
+
+    function renderLobbyPlayers(players) {
+        const list = document.getElementById('player-join-list');
+        list.innerHTML = players.map(p => `
+            <div class="bg-gray-200 p-3 rounded-lg flex justify-between items-center">
+                <span class="font-semibold text-gray-700">${p.name}</span>
+                ${isHost ? `<button class="text-red-500 font-bold" onclick="deletePlayer(${p.id})">X</button>` : ''}
+            </div>
+        `).join('');
+    }
+
+    function renderQuestion(question) {
+        if (!question || document.getElementById('question-id')?.dataset.id == question.id) return;
+        document.getElementById('quiz-question-text').innerHTML = `<span id="question-id" data-id="${question.id}">${question.text}</span>`;
+        const timerBar = document.getElementById('timer-bar-inner');
+        timerBar.style.transition = `width ${question.time_left}s linear`;
+        setTimeout(() => timerBar.style.width = '0%', 50);
+
+        const optionsContainer = document.getElementById('quiz-options-container');
+        optionsContainer.innerHTML = question.choices.map(choice => `
+            <button class="quiz-option p-4 border-2 rounded-lg text-lg font-semibold hover:border-indigo-500 transition" onclick="submitAnswer('${choice}')">
+                ${choice}
+            </button>
+        `).join('');
+    }
+
+    function renderAnsweredPlayers(players, answered_ids) {
+        const list = document.getElementById('player-answer-list');
+        list.innerHTML = players.map(p => `
+            <div class="p-2 rounded text-center font-semibold ${answered_ids.includes(p.id) ? 'bg-green-500 text-white' : 'bg-gray-200'}">
+                ${p.name}
+            </div>
+        `).join('');
+    }
+
+    function renderResults(players) {
+        players.sort((a, b) => b.score - a.score);
+        const winners = players.slice(0, 3);
+        const container = document.getElementById('podium-container');
+
+        const podiumHTML = `
+            <div class="text-center">
+                <h2 class="text-2xl font-bold">${winners[1]?.name || ''}</h2>
+                <div class="bg-gray-400 text-white p-6 rounded-t-lg h-32 flex items-center justify-center"><span class="text-4xl font-bold">2nd</span></div>
+            </div>
+            <div class="text-center">
+                <h2 class="text-3xl font-bold text-amber-500">${winners[0]?.name || ''}</h2>
+                <div class="bg-amber-400 text-white p-8 rounded-t-lg h-48 flex items-center justify-center"><span class="text-5xl font-bold">1st</span></div>
+            </div>
+            <div class="text-center">
+                <h2 class="text-xl font-bold">${winners[2]?.name || ''}</h2>
+                <div class="bg-yellow-600 text-white p-4 rounded-t-lg h-24 flex items-center justify-center"><span class="text-3xl font-bold">3rd</span></div>
+            </div>
+        `;
+        container.innerHTML = podiumHTML;
+    }
+
+    // --- API Calls ---
+    async function submitAnswer(choice) {
+        document.querySelectorAll('.quiz-option').forEach(btn => btn.disabled = true);
+        await fetch(`/api/submit_answer/${gameCode}/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({ choice })
+        });
+    }
+
+    async function deletePlayer(playerId) {
+        await fetch(`/api/host/delete_player/${gameCode}/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({ player_id: playerId })
+        });
+    }
+
+    if (isHost) {
+        document.getElementById('start-game-btn').addEventListener('click', async () => {
+            await fetch(`/api/host/start_game/${gameCode}/`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken}
+            });
+        });
+    }
+
+    // --- Polling for Game State ---
+    setInterval(async () => {
+        const response = await fetch(`/api/game_state/${gameCode}/`);
+        const state = await response.json();
+        updateUI(state);
+    }, 1500); // Poll every 1.5 seconds
+</script>
+</body>
+</html>
